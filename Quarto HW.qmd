@@ -1,0 +1,167 @@
+---
+title: "Quarto HW"
+format: html
+editor: visual
+---
+
+## Load Libraries
+
+```{r, message=F, warning=F, echo=T}
+library(tidyverse)
+library(here)
+```
+
+## Project Overview
+
+This project has two raw data files at different scales from a study of infants, children, and adults watching a series of 7 video clips.
+
+Steps 1 and 2 import and merge the data, and are included for reference. Step 3 focuses on exploratory data analysis (EDA).
+
+## Source Description
+
+### File 1: `auc.csv`
+
+-   `stim`: Stimulus video (levels/labels provided below)
+-   `id`: Unique participant identifier
+-   `age`: Age in days
+-   `AUC_sal`: Area-under-the-curve for a saliency model
+-   `AUC_dist`: Area-under-the-curve for a distance model
+
+AUC values indicate how well each model predicted where participants looked when watching a video. Values range from 0-1, where 0.5 is chance and 1 is perfect prediction.
+
+### File 2: `participants_info_full_headers.csv`
+
+-   `id`: Unique participant identifier (matches `auc.csv`)
+-   `age_group`: Categorical age variable with levels:
+    -   ".5-1 y", "1-1.5 y", "1.5-2 y", "2-4 y", "4-6 y", "8-10 y", "adult"
+-   `precision`: Quality measure of the eye data (smaller is better)
+-   `Seen X`: Indicates whether the participant saw the stimulus video before the study (coded as SEEN (1), NOT SEEN (2), NOT SURE (3))
+
+## Step 1: Read in the AUC Data and Code `stim` as a Factor
+
+```{r}
+auc <- read_csv(here("data_raw", "auc_bystim.csv"))
+
+stim_levels <- 1:7
+stim_labels <- c("Fallon","Feist","Pentatonix","Science","Rube","Plane","Dogs")
+auc <- auc %>%
+  mutate(stim = factor(stim, levels = stim_levels, labels = stim_labels))
+```
+
+## Step 2: Read in and Merge Participant Info Data
+
+### Read in the Participant Data
+
+```{r}
+ppt <- read_csv(here("data_raw", "participants_info_full_headers.csv")) %>%
+  rename(id = `participant ID`,
+         age_group = `Age group`,
+         precision = "Precision")
+```
+
+### Pivot Longer and Extract Stimulus Names
+
+```{r}
+ppt_long <- ppt %>%
+  pivot_longer(cols = starts_with("Seen"), names_to = "stim", values_to = "watched") %>%
+  separate(stim, into = c(NA, "stim"))
+```
+
+### Convert `stim` and `watched` to Factors
+
+```{r}
+ppt_long <- ppt_long %>%
+  mutate(
+    stim = factor(stim, levels = stim_labels, labels = stim_labels),
+    watched = factor(watched, levels = 1:3, labels = c("Yes", "No", "Not Sure"))
+  )
+```
+
+### Merge the Data and Clean
+
+```{r}
+ds <- left_join(auc, ppt_long, by = c("id", "stim")) %>%
+  drop_na(AUC_sal:AUC_dist)
+
+# Write the cleaned data to file
+ds %>% write_csv(here("data_cleaned", "cleaned.csv"))
+```
+
+## Step 3: Exploratory Data Analysis
+
+### 3A. Precision Analysis
+
+#### Visualizing Precision Distribution
+
+```{r}
+ds %>%
+  ggplot(aes(x = precision)) +
+  geom_histogram() +
+  geom_vline(xintercept = 2.5)
+```
+
+#### Identifying Participants with Unusable Data
+
+```{r}
+ds %>%
+  group_by(id, age_group) %>%
+  summarize(precision = mean(precision, na.rm = TRUE)) %>%
+  filter(precision > 2.5)
+
+ds %>% filter(precision > 2.5)
+```
+
+#### Comparing Precision Across Age Groups
+
+```{r}
+ds %>%
+  group_by(age_group) %>%
+  summarize(across(precision, list(M = mean, MIN = min, MAX = max)))
+
+ds %>%
+  ggplot(aes(x = age_group, y = precision)) +
+  geom_boxplot() +
+  geom_hline(yintercept = 2.5)
+
+ds %>%
+  ggplot(aes(x = age, y = precision)) +
+  geom_point() +
+  geom_hline(yintercept = 2.5)
+```
+
+### 3B. Age Analysis
+
+#### Convert Age to Years
+
+```{r}
+ds <- ds %>% mutate(age_years = age / 365.25)
+```
+
+#### Visualizing Age by Age Group
+
+```{r}
+ds %>%
+  group_by(id, age_group) %>%
+  summarize(age_years = mean(age_years)) %>%
+  ggplot(aes(y = age_group, x = age_years)) +
+  geom_boxplot()
+```
+
+#### Alternative: Faceted Plot
+
+```{r}
+ds %>%
+  group_by(id, age_group) %>%
+  summarize(age_years = mean(age_years)) %>%
+  ggplot(aes(y = age_years)) +
+  geom_boxplot() +
+  facet_wrap("age_group", scales = "free")
+```
+
+#### Summary Table of Age in Years by Age Group
+
+```{r}
+ds %>%
+  group_by(age_group) %>%
+  summarize(min_age = min(age_years), max_age = max(age_years))
+```
